@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tiny-mcp-server"
+version = "0.1.0"
+description = "The fastest, smallest way to build Model Context Protocol (MCP) servers in Python. Zero dependencies."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+    { name = "hussain-alsaibai", email = "hussain.alsaibai@gmail.com" },
+]
+keywords = ["mcp", "model-context-protocol", "llm", "agent", "tool-use"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/hussain-alsaibai/tiny-mcp-server"
+Repository = "https://github.com/hussain-alsaibai/tiny-mcp-server"
+Issues = "https://github.com/hussain-alsaibai/tiny-mcp-server/issues"
+
+[tool.setuptools]
+py-modules = ["tiny_mcp_server"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tiny_mcp_server*"]
