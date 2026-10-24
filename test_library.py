@@ -194,6 +194,114 @@ def test_example_module_imports():
     print("ok")
 
 
+def test_server_discover():
+    print("[test] server/discover ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}
+    )
+    assert_eq(resp["jsonrpc"], "2.0", "jsonrpc version")
+    result = resp["result"]
+    assert_in("2026-07-28", result["supportedVersions"], "supportedVersions")
+    assert_in("tools", result["capabilities"], "capabilities")
+    # Discover is cacheable.
+    assert_in("ttlMs", result, "ttlMs")
+    assert_in("cacheScope", result, "cacheScope")
+    assert_eq(result["resultType"], "complete", "resultType")
+    print("ok")
+
+
+def test_result_carries_result_type_and_meta():
+    print("[test] resultType and _meta ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}
+    )
+    meta = resp["result"]["_meta"]
+    assert_eq(
+        meta["io.modelcontextprotocol/serverInfo"]["name"],
+        "hello",
+        "serverInfo.name in _meta",
+    )
+    assert_eq(
+        meta["io.modelcontextprotocol/serverInfo"]["version"],
+        "1.2.3",
+        "serverInfo.version in _meta",
+    )
+    print("ok")
+
+
+def test_supported_protocol_version_accepted():
+    print("[test] supported protocol version in _meta ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+                }
+            },
+        }
+    )
+    assert_in("result", resp, "should not error")
+    print("ok")
+
+
+def test_unsupported_protocol_version_rejected():
+    print("[test] unsupported protocol version rejected ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/list",
+            "params": {
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "1999-01-01"
+                }
+            },
+        }
+    )
+    assert_eq(resp["error"]["code"], -32022, "unsupported version code")
+    assert_eq(resp["error"]["data"]["requested"], "1999-01-01", "requested")
+    assert_in("2026-07-28", resp["error"]["data"]["supported"], "supported list")
+    print("ok")
+
+
+def test_tools_list_is_cacheable():
+    print("[test] tools/list is cacheable ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}}
+    )
+    assert_in("ttlMs", resp["result"], "ttlMs")
+    assert_eq(resp["result"]["cacheScope"], "public", "cacheScope")
+    print("ok")
+
+
+def test_legacy_initialize_reports_current_revision():
+    print("[test] legacy initialize reports current revision ...", end=" ")
+    app = Server("hello", version="1.2.3")
+
+    resp = app.handle_message(
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}
+    )
+    # The legacy handshake is kept for compatibility, but it must not
+    # advertise an ancient revision.
+    assert_eq(
+        resp["result"]["protocolVersion"], "2026-07-28", "protocolVersion"
+    )
+    print("ok")
+
+
 def main():
     tests = [
         test_schema_generation,
@@ -201,6 +309,12 @@ def main():
         test_decorator_basic,
         test_decorator_with_args,
         test_initialize,
+        test_server_discover,
+        test_result_carries_result_type_and_meta,
+        test_supported_protocol_version_accepted,
+        test_unsupported_protocol_version_rejected,
+        test_tools_list_is_cacheable,
+        test_legacy_initialize_reports_current_revision,
         test_tools_list,
         test_tools_call,
         test_invalid_jsonrpc,

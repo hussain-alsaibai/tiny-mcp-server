@@ -45,7 +45,33 @@ from typing import (
 
 __all__ = ["Server", "tool", "Tool", "ToolError", "StdioTransport", "SseTransport"]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+
+# ---------- Protocol constants ----------
+
+#: The MCP specification revision this server speaks. Revisions are
+#: dates, not semver: the spec moved to YYYY-MM-DD with the 2025-11-25
+#: revision, and 2026-07-28 removed the initialize handshake entirely.
+PROTOCOL_VERSION = "2026-07-28"
+
+#: Protocol revisions this server can serve. A client picks one from
+#: this list during discovery.
+SUPPORTED_PROTOCOL_VERSIONS = ("2026-07-28",)
+
+#: Default freshness hint (milliseconds) on cacheable list results.
+DEFAULT_TTL_MS = 30000
+
+#: Result type for an ordinary, final result.
+RESULT_TYPE_COMPLETE = "complete"
+
+#: JSON-RPC error code for an unsupported protocol version (SEP-2575).
+UNSUPPORTED_PROTOCOL_VERSION = -32022
+
+#: Reserved _meta key carrying the protocol version of a request.
+META_PROTOCOL_VERSION = "io.modelcontextprotocol/protocolVersion"
+
+#: Reserved _meta key carrying the server identity in a result.
+META_SERVER_INFO = "io.modelcontextprotocol/serverInfo"
 
 # --------------------------------------------------------------------------- #
 # Logging
@@ -325,6 +351,21 @@ class Server:
             return _make_error(req_id, METHOD_NOT_FOUND, f"method not found: {method}")
 
         params = message.get("params") or {}
+
+        # Version negotiation is inline via _meta on every request. An
+        # unknown version is a protocol error, not a silent success.
+        requested = self._request_protocol_version(params)
+        if requested and requested not in SUPPORTED_PROTOCOL_VERSIONS:
+            return _make_error(
+                req_id,
+                UNSUPPORTED_PROTOCOL_VERSION,
+                "unsupported protocol version: " + requested,
+                data={
+                    "requested": requested,
+                    "supported": list(SUPPORTED_PROTOCOL_VERSIONS),
+                },
+            )
+
         try:
             result = handler(params)
         except ToolError as exc:
@@ -344,25 +385,74 @@ class Server:
         # Notifications have no id; don't respond.
         if req_id is None and "id" not in message:
             return None
+
+        # Every result must carry a resultType, and should identify the
+        # server that produced it (SEP-2575).
+        if isinstance(result, dict):
+            result.setdefault("resultType", RESULT_TYPE_COMPLETE)
+            meta = dict(result.get("_meta") or {})
+            meta.setdefault(
+                META_SERVER_INFO, {"name": self.name, "version": self.version}
+            )
+            result["_meta"] = meta
         return _make_result(req_id, result)
 
     # ---- MCP-specific handlers -------------------------------------------- #
 
+    def _request_protocol_version(self, params: Dict[str, Any]) -> str:
+        """The protocol version a request declares, if any.
+
+        The 2026-07-28 revision made MCP stateless: every request
+        carries its protocol version and client capabilities in _meta.
+        """
+        if not isinstance(params, dict):
+            return ""
+        meta = params.get("_meta")
+        if isinstance(meta, dict):
+            value = meta.get(META_PROTOCOL_VERSION)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return ""
+
+    def _handle_server_discover(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle server/discover (SEP-2575).
+
+        Servers MUST implement this RPC to advertise their supported
+        protocol versions, capabilities, and identity. The result is
+        cacheable, so it carries ttlMs and cacheScope.
+        """
+        return {
+            "supportedVersions": list(SUPPORTED_PROTOCOL_VERSIONS),
+            "capabilities": {"tools": {"listChanged": False}},
+            "ttlMs": DEFAULT_TTL_MS,
+            "cacheScope": "public",
+        }
+
     def _handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        client = _safe_getattr(params, "get", lambda *_: None)("clientInfo", {}) \
-            if hasattr(params, "get") else params.get("clientInfo", {}) if isinstance(params, dict) else {}
+        """Legacy handshake, kept for backwards compatibility.
+
+        The 2026-07-28 revision removed initialize from the protocol, but
+        every server observed speaking the current dialect also kept this
+        handler. Answering it costs nothing and keeps older clients
+        working.
+        """
+        client = params.get("clientInfo", {}) if isinstance(params, dict) else {}
         log.info(
             "initialize from client=%s version=%s",
             (client or {}).get("name", "?"),
             (client or {}).get("version", "?"),
         )
         return {
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
             "serverInfo": {"name": self.name, "version": self.version},
         }
 
     def _handle_ping(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Legacy ping, kept for backwards compatibility.
+
+        ping was removed as a core method in the 2026-07-28 revision.
+        """
         return {}
 
     def _handle_tools_list(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -375,7 +465,13 @@ class Server:
                 }
                 for t in self._tools.values()
             ]
-        return {"tools": tools}
+        # List results are cacheable: ttlMs and cacheScope let clients
+        # cache them and cut polling.
+        return {
+            "tools": tools,
+            "ttlMs": DEFAULT_TTL_MS,
+            "cacheScope": "public",
+        }
 
     def _handle_tools_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(params, dict):

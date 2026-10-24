@@ -4,6 +4,21 @@
 
 `tiny-mcp-server` is a single-file Python framework for building [Model Context Protocol](https://modelcontextprotocol.io) servers. No external dependencies, no boilerplate — just decorate a function with `@tool` and you're shipping an MCP server.
 
+## Protocol support
+
+Speaks the **2026-07-28** MCP revision:
+
+- `server/discover` — advertises `supportedVersions`, `capabilities`, identity
+- Every request may carry its protocol version in `_meta`; an unknown version
+  returns `-32022` with the list of supported versions
+- Every result carries `resultType` and the server identity in `_meta`
+- `tools/list` and `server/discover` carry `ttlMs` + `cacheScope`
+
+The legacy `initialize` handler is **kept** and still answers — every server
+observed in the wild that speaks the current dialect also kept it, and it
+costs nothing. A legacy client and a current client can both talk to the
+same server.
+
 ## Features
 
 - 🪶 **One-file, zero-dependency** — pure Python stdlib, drop it in any project
